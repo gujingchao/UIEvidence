@@ -22,7 +22,8 @@ export const REQUIREMENT_CATEGORY_LABELS: Record<RequirementCategory, string> = 
   other: '其他',
 };
 
-export type CaptureStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed';
+/** login_required:页面把采集挡在了登录页外,需要用户先登录 */
+export type CaptureStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'login_required';
 
 export type InteractionType = 'tab' | 'pagination' | 'modal';
 
@@ -39,8 +40,42 @@ export interface Project {
   allowAi: boolean;
   archived: boolean;
   planText: string;
+  /**
+   * 允许放行的 POST 接口路径(默认为空)。采集默认拦截全部写入类请求,
+   * 但不少系统用 POST 读数据(如 /graphql、搜索、列表查询),需要使用者逐个确认放行。
+   * 写法:/api/list 精确匹配,/api/query/* 前缀匹配。
+   */
+  allowedPost: string[];
+  /** 使用者最近一次关闭登录窗口的时间;null 表示还没有登录会话 */
+  loginSetAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LoginState {
+  /** 登录窗口当前是否开着 */
+  open: boolean;
+  setAt: string | null;
+}
+
+/** 从已采集页面里发现、但还不在页面清单里的站内链接 */
+export interface DiscoveredLink {
+  url: string;
+  text: string;
+  /** 在几个页面里出现过 */
+  count: number;
+  pageIds: number[];
+}
+
+export interface DiscoveryResult {
+  links: DiscoveredLink[];
+  /** 看起来会改变状态(退出登录、删除、支付等)而被排除的链接 */
+  excluded: { url: string; text: string; reason: string }[];
+}
+
+export interface BulkAddResult {
+  added: Page[];
+  skipped: { url: string; reason: string }[];
 }
 
 export interface Page {
@@ -117,7 +152,14 @@ export interface Feature {
   updatedAt: string;
 }
 
-export type GapType = 'interaction_skipped' | 'capture_failed' | 'capture_partial' | 'request_blocked' | 'out_of_scope' | 'manual';
+export type GapType =
+  | 'interaction_skipped'
+  | 'capture_failed'
+  | 'capture_partial'
+  | 'request_blocked'
+  | 'out_of_scope'
+  | 'auth_required'
+  | 'manual';
 
 export interface Gap {
   id: number;
@@ -127,6 +169,8 @@ export interface Gap {
   type: GapType;
   description: string;
   resolved: boolean;
+  /** request_blocked 时记录被拦截的请求,界面据此提供"允许这个接口"的操作 */
+  meta: { method?: string; path?: string } | null;
   createdAt: string;
 }
 

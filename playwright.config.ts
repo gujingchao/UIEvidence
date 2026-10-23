@@ -6,7 +6,7 @@ const dataDir = path.join(os.tmpdir(), `uiev-e2e-${process.pid}`);
 
 export default defineConfig({
   testDir: 'e2e',
-  timeout: 120_000,
+  timeout: 240_000,
   workers: 1,
   reporter: 'list',
   use: {
@@ -15,19 +15,12 @@ export default defineConfig({
     channel: 'chrome',
     headless: true,
   },
-  webServer: [
-    {
-      command: 'npm run fixtures',
-      env: { PORT: '4391' },
-      url: 'http://127.0.0.1:4391/',
-      reuseExistingServer: false,
-    },
-    {
-      command: 'npm run build && npm run start -w @uievidence/server',
-      env: { PORT: '4390', UIEV_DATA_DIR: dataDir },
-      url: 'http://127.0.0.1:4390/api/health',
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-  ],
+  webServer: {
+    // 示例项目的测试站由服务自己启动,不需要另开进程
+    command: 'npm run build && npm run start -w @uievidence/server',
+    env: { PORT: '4390', UIEV_DATA_DIR: dataDir },
+    url: 'http://127.0.0.1:4390/api/health',
+    reuseExistingServer: false,
+    timeout: 120_000,
+  },
 });

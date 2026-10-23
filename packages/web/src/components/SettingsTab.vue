@@ -4,17 +4,20 @@ import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useProjectStore } from '../store';
 import { notify } from '../toast';
+import LoginCard from './LoginCard.vue';
 
 const store = useProjectStore();
 const router = useRouter();
 
 const form = ref({ name: '', targetUrl: '', purpose: '', authorization: '', domains: '' });
+const postText = ref('');
 
 watch(
   () => store.project.value,
   (p) => {
     if (!p) return;
     form.value = { name: p.name, targetUrl: p.targetUrl, purpose: p.purpose, authorization: p.authorization, domains: p.allowedDomains.join('\n') };
+    postText.value = p.allowedPost.join('\n');
   },
   { immediate: true },
 );
@@ -30,6 +33,16 @@ async function save() {
     });
     await store.loadProject();
     notify('已保存', 'ok');
+  } catch (err) {
+    notify((err as Error).message, 'error');
+  }
+}
+
+async function savePost() {
+  try {
+    await api.updateProject(store.projectId, { allowedPost: postText.value.split(/[\s,;,;]+/).filter(Boolean) });
+    await store.loadProject();
+    notify('已保存放行清单', 'ok');
   } catch (err) {
     notify((err as Error).message, 'error');
   }
@@ -81,6 +94,22 @@ async function remove() {
         <div class="hint">已添加的页面不受影响,但之后的采集只会访问这些域名。</div>
       </label>
       <label class="field"><span>授权说明</span><textarea v-model="form.authorization"></textarea></label>
+      <div class="row"><button class="primary" type="submit">保存</button></div>
+    </form>
+
+    <LoginCard />
+
+    <form class="panel stack" @submit.prevent="savePost">
+      <h2>放行只读的 POST 接口</h2>
+      <div class="muted small">
+        采集时默认拦截所有会改变数据的请求(POST、PUT、DELETE 等)。但不少系统用 POST 来<strong>读取</strong>数据(GraphQL、搜索、列表查询),被拦截后页面会是空的。
+        被拦截的请求会出现在“分析缺口”里,确认它只是读数据后可以在那里一键放行;也可以在这里手动维护。
+      </div>
+      <label class="field">
+        <span>放行的接口路径(每行一个)</span>
+        <textarea v-model="postText" placeholder="/api/orders&#10;/graphql&#10;/api/search/*"></textarea>
+        <div class="hint">只放行 POST,路径精确匹配;结尾加 <code>*</code> 表示前缀匹配。<strong>不要放行会新增、修改或删除数据的接口</strong>(包括 GraphQL 的 mutation)。</div>
+      </label>
       <div class="row"><button class="primary" type="submit">保存</button></div>
     </form>
 

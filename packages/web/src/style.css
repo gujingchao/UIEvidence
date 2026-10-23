@@ -221,16 +221,20 @@ button.link {
   overflow-x: auto;
 }
 
-.tabs button {
-  border: none;
+.tabs a {
   border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
+  color: var(--text);
+  text-decoration: none;
   padding: 8px 14px;
   white-space: nowrap;
+  position: relative;
 }
 
-.tabs button.active {
+.tabs a:hover {
+  color: var(--primary);
+}
+
+.tabs a.active {
   border-bottom-color: var(--primary);
   color: var(--primary);
   font-weight: 600;
@@ -465,5 +469,252 @@ th {
   th:nth-child(n + 4),
   td:nth-child(n + 4) {
     display: none;
+  }
+}
+
+/* 链接做成按钮的样子 */
+.btn {
+  display: inline-block;
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--primary);
+}
+
+.btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bad);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* 概览:流程看板 */
+.flow {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.flow li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--panel);
+}
+
+.flow li.next {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.flow li.done {
+  opacity: 0.8;
+}
+
+.flow-n {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--info-bg);
+  font-weight: 700;
+}
+
+.flow li.done .flow-n {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.flow li.next .flow-n {
+  background: var(--primary);
+  color: var(--primary-text);
+}
+
+.flow-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.flow-title {
+  font-weight: 600;
+}
+
+.todo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.todo li:last-child {
+  border-bottom: none;
+}
+
+.todo li.urgent {
+  color: var(--bad);
+}
+
+/* 登录卡片 */
+.login-card.highlight {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px var(--bad);
+}
+
+.steps-text {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.help-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.help-list li {
+  margin-bottom: 4px;
+}
+
+/* 发现的页面 */
+.discovered {
+  border-color: var(--primary);
+}
+
+.disc-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.disc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.disc-item:last-child {
+  border-bottom: none;
+}
+
+.disc-item:hover {
+  background: var(--info-bg);
+}
+
+/* 提示条里的操作 */
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast > span {
+  flex: 1;
+}
+
+.toast-action {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* 抽屉 */
+.drawer-head {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  background: var(--bg);
+  padding: 10px 0;
+  margin-top: -18px;
+}
+
+details.panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.chip.evidence {
+  font-weight: 600;
+}
+
+button.chip {
+  cursor: pointer;
+  color: var(--primary);
+}
+
+.check-list {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.check-list li {
+  margin-bottom: 4px;
+}
+
+.check-list li.warn {
+  color: var(--warn);
+}
+
+.report-preview {
+  width: 100%;
+  height: 720px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.welcome {
+  text-align: center;
+  padding: 36px 24px;
+}
+
+.welcome p {
+  max-width: 560px;
+  margin: 0 auto 16px;
+}
+
+.welcome .row {
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .flow li {
+    flex-wrap: wrap;
   }
 }

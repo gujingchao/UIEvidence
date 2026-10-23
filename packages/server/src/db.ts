@@ -110,6 +110,12 @@ const MIGRATIONS: string[] = [
   CREATE INDEX idx_features_project ON features(project_id);
   CREATE INDEX idx_gaps_project ON gaps(project_id);
   `,
+  // 登录会话与只读 POST 放行
+  `
+  ALTER TABLE projects ADD COLUMN allowed_post TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE projects ADD COLUMN login_set_at TEXT;
+  ALTER TABLE gaps ADD COLUMN meta TEXT;
+  `,
 ];
 
 export function openDb(file: string): Db {

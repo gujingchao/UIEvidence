@@ -2,10 +2,12 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 /**
- * 受控的本地测试站,用于验证采集行为。
+ * 受控的本地测试站,用于验证采集行为,也是工作台里"示例项目"的目标。
  * 所有写入类请求和对"别名主机名"的请求都会被记录,测试据此断言:
  *   - 只读采集没有触发任何写入;
  *   - 白名单外的主机名没有收到任何请求。
+ *
+ * 登录演示:/login 用 Cookie 登录(账号 demo / 密码 demo123),/members 开头的页面需要登录。
  */
 
 export interface LogEntry {
@@ -26,6 +28,10 @@ export interface FixtureServer {
   close(): Promise<void>;
 }
 
+export const DEMO_USER = 'demo';
+export const DEMO_PASSWORD = 'demo123';
+const SESSION_COOKIE = 'sid=demo-session';
+
 const page = (title: string, body: string, head = '') => `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -39,25 +45,136 @@ main{padding:24px;max-width:880px}
 button{padding:6px 14px;margin:4px}
 .modal{display:none;border:1px solid #888;padding:16px;background:#fffbe6}
 .modal.open{display:block}
+table{border-collapse:collapse}td,th{border:1px solid #ccd;padding:4px 10px}
 </style>${head}</head>
 <body>
 <header><nav aria-label="主导航">
-<a href="/">首页</a><a href="/courses">课程</a><a href="/contact">联系我们</a><a href="/dynamic">动态页</a>
+<a href="/">首页</a><a href="/courses">课程</a><a href="/contact">联系我们</a><a href="/dynamic">动态页</a><a href="/members">会员中心</a>
 </nav></header>
 <main>${body}</main>
 </body></html>`;
 
 const COURSES = ['Python 入门', 'Web 前端基础', '数据分析实战', 'Java 后端开发', 'UI 设计', '产品经理训练营'];
+const ORDERS = [
+  { no: 'A-1001', course: 'Python 入门', amount: 299 },
+  { no: 'A-1002', course: 'UI 设计', amount: 499 },
+  { no: 'A-1003', course: '数据分析实战', amount: 699 },
+];
 
-function routes(req: http.IncomingMessage, host: string, port: number): { status: number; type: string; body: string | Buffer; delayMs?: number } {
+interface Result {
+  status: number;
+  type: string;
+  body: string | Buffer;
+  delayMs?: number;
+  headers?: Record<string, string>;
+}
+
+const hasSession = (req: http.IncomingMessage) => (req.headers.cookie ?? '').split(/;\s*/).includes(SESSION_COOKIE);
+
+const redirect = (location: string, headers: Record<string, string> = {}): Result => ({
+  status: 302,
+  type: 'text/plain; charset=utf-8',
+  body: '',
+  headers: { Location: location, ...headers },
+});
+
+function loginPage(next: string, error = ''): Result {
+  return {
+    status: 200,
+    type: 'text/html; charset=utf-8',
+    body: page(
+      '登录',
+      `<h1>会员登录</h1>
+${error ? `<p style="color:#b42318">${error}</p>` : ''}
+<p class="card">演示账号:<code>${DEMO_USER}</code> / 密码:<code>${DEMO_PASSWORD}</code></p>
+<form method="post" action="/login">
+<input type="hidden" name="next" value="${next}">
+<p><label for="u">账号</label> <input id="u" name="user" required></p>
+<p><label for="p">密码</label> <input id="p" name="pass" type="password" required></p>
+<button type="submit">登录</button>
+</form>`,
+    ),
+  };
+}
+
+function routes(req: http.IncomingMessage, host: string, port: number, body: string): Result {
   const url = new URL(req.url ?? '/', `http://${host}`);
   const path = url.pathname;
+  const method = req.method ?? 'GET';
   const alt = host.startsWith('localhost') ? `127.0.0.1:${port}` : `localhost:${port}`;
-  const html = (body: string, status = 200) => ({ status, type: 'text/html; charset=utf-8', body });
+  const html = (content: string, status = 200): Result => ({ status, type: 'text/html; charset=utf-8', body: content });
+
+  if (path === '/login') {
+    if (method === 'POST') {
+      const form = new URLSearchParams(body);
+      const next = form.get('next') || '/members';
+      if (form.get('user') === DEMO_USER && form.get('pass') === DEMO_PASSWORD) {
+        return redirect(next.startsWith('/') ? next : '/members', { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly; SameSite=Lax` });
+      }
+      return loginPage(next, '账号或密码不对');
+    }
+    return loginPage(url.searchParams.get('next') ?? '/members');
+  }
+
+  if (path === '/api/orders') {
+    if (!hasSession(req)) return { status: 401, type: 'application/json', body: JSON.stringify({ error: 'login required' }) };
+    return { status: 200, type: 'application/json', body: JSON.stringify(ORDERS) };
+  }
+
+  if (path === '/members' || path.startsWith('/members/') || path === '/members-spa') {
+    if (!hasSession(req)) return redirect(`/login?next=${encodeURIComponent(path)}`);
+    if (path === '/members') {
+      return html(
+        page(
+          '会员中心',
+          `<h1>会员中心</h1><p>欢迎回来,demo。</p>
+<ul><li><a href="/members/orders">我的订单</a></li><li><a href="/members-spa">订单(动态加载)</a></li></ul>`,
+        ),
+      );
+    }
+    if (path === '/members/orders') {
+      const rows = ORDERS.map((o) => `<tr><td>${o.no}</td><td>${o.course}</td><td>${o.amount}</td></tr>`).join('');
+      return html(page('我的订单', `<h1>我的订单</h1><table><thead><tr><th>订单号</th><th>课程</th><th>金额</th></tr></thead><tbody>${rows}</tbody></table>`));
+    }
+    // 订单靠 POST 接口读取:默认被只读拦截,需要在项目里放行 /api/orders
+    return html(
+      page(
+        '订单(动态加载)',
+        `<h1>订单(动态加载)</h1><div id="out">加载中…</div>
+<script>
+fetch('/api/orders',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})
+ .then(r=>r.json()).then(list=>{
+  document.getElementById('out').innerHTML='<table><thead><tr><th>订单号</th><th>课程</th><th>金额</th></tr></thead><tbody>'+
+   list.map(o=>'<tr><td>'+o.no+'</td><td>'+o.course+'</td><td>'+o.amount+'</td></tr>').join('')+'</tbody></table>';
+ }).catch(()=>{document.getElementById('out').textContent='订单加载失败';});
+</script>`,
+      ),
+    );
+  }
+
+  if (path === '/private') {
+    return html(page('需要认证', '<h1>401</h1><p>需要认证才能访问。</p>'), 401);
+  }
 
   switch (path) {
     case '/':
-      return html(page('示例培训机构 - 首页', `<h1>示例培训机构</h1><p>欢迎访问。</p><h2>热门课程</h2><p>查看<a href="/courses">全部课程</a>。</p>`));
+      return html(
+        page(
+          '示例培训机构 - 首页',
+          `<h1>示例培训机构</h1><p>欢迎访问。这是 UIEvidence 自带的示例站点。</p>
+<h2>热门课程</h2><p>查看<a href="/courses">全部课程</a>。</p>
+<h2>站点地图</h2>
+<ul>
+<li><a href="/courses">课程列表(含 Tab 和分页)</a></li>
+<li><a href="/contact">联系我们(表单)</a></li>
+<li><a href="/dynamic">动态页(异步加载、弹窗)</a></li>
+<li><a href="/trap">陷阱页(带删除、支付按钮)</a></li>
+<li><a href="/inject">公告(含伪造的指令文字)</a></li>
+<li><a href="/members">会员中心(需要登录)</a></li>
+<li><a href="/missing">已下线的页面(404)</a></li>
+</ul>`,
+        ),
+      );
 
     case '/courses': {
       const pageNo = Number(url.searchParams.get('page') ?? '1');
@@ -169,16 +286,19 @@ export async function startFixtures(options: { port?: number } = {}): Promise<Fi
     const path = new URL(req.url ?? '/', `http://${host}`).pathname;
     entries.push({ method, path, host });
 
-    req.resume();
-    const port = (server.address() as AddressInfo).port;
-    const result = routes(req, host, port);
-    // 写入类请求照常返回,方便观察页面是否把它当成功;记录已经留在 entries 里
-    const send = () => {
-      res.writeHead(result.status, { 'Content-Type': result.type, 'Cache-Control': 'no-store' });
-      res.end(result.body);
-    };
-    if (result.delayMs) setTimeout(send, result.delayMs);
-    else send();
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      const port = (server.address() as AddressInfo).port;
+      const result = routes(req, host, port, Buffer.concat(chunks).toString('utf8'));
+      // 写入类请求照常返回,方便观察页面是否把它当成功;记录已经留在 entries 里
+      const send = () => {
+        res.writeHead(result.status, { 'Content-Type': result.type, 'Cache-Control': 'no-store', ...result.headers });
+        res.end(result.body);
+      };
+      if (result.delayMs) setTimeout(send, result.delayMs);
+      else send();
+    });
   });
 
   await new Promise<void>((resolve) => server.listen(options.port ?? 0, '127.0.0.1', resolve));

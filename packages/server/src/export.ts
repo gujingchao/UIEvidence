@@ -72,9 +72,11 @@ const STATUS_LABELS: Record<string, string> = {
   success: '成功',
   partial: '部分成功',
   failed: '失败',
+  login_required: '需要登录',
 };
 
 const GAP_LABELS: Record<string, string> = {
+  auth_required: '需要登录',
   interaction_skipped: '未执行的交互',
   capture_failed: '采集失败',
   capture_partial: '部分采集',

@@ -3,15 +3,18 @@ import path from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z, ZodError } from 'zod';
-import type { HealthInfo, PageStructure } from '@uievidence/shared';
+import { startFixtures, type FixtureServer } from '@uievidence/fixtures';
+import type { BulkAddResult, HealthInfo, Page, PageStructure } from '@uievidence/shared';
 import { analyze, getProvider, listProviders } from './ai.js';
 import { detectBrowser } from './browser.js';
 import { candidatesFromStructure } from './candidates.js';
 import { CaptureRunner } from './capture.js';
 import { openDb } from './db.js';
+import { discoverLinks, isFileLink, normalizePageUrl, pageKey, riskyReason } from './discover.js';
 import { writeExport } from './export.js';
-import { NotFoundError, Repo } from './repo.js';
-import { assertUrlAllowed, normalizeDomains, ScopeError } from './scope.js';
+import { LoginManager, type LoginOptions } from './login.js';
+import { ConflictError, NotFoundError, Repo } from './repo.js';
+import { assertUrlAllowed, normalizeDomains, normalizePostPatterns, ScopeError } from './scope.js';
 import { Storage } from './storage.js';
 
 export const VERSION = '0.1.0';
@@ -23,6 +26,8 @@ export interface AppOptions {
   env?: NodeJS.ProcessEnv;
   /** 本地服务监听的端口,用于校验 Host 头 */
   port?: number;
+  /** 测试用:替换"登录窗口"的进程启动、浏览器查找和调试连接 */
+  login?: LoginOptions;
 }
 
 export interface AppContext {
@@ -30,6 +35,7 @@ export interface AppContext {
   repo: Repo;
   storage: Storage;
   runner: CaptureRunner;
+  login: LoginManager;
 }
 
 const domainEntry = z
@@ -56,6 +62,7 @@ const projectPatch = z.object({
   allowAi: z.boolean().optional(),
   archived: z.boolean().optional(),
   planText: z.string().max(100_000).optional(),
+  allowedPost: z.array(z.string().max(300)).max(100).optional(),
 });
 
 const captureBody = z.object({
@@ -102,13 +109,18 @@ export async function createApp(options: AppOptions): Promise<AppContext> {
   const storage = new Storage(options.dataDir);
   const db = openDb(path.join(storage.root, 'uievidence.db'));
   const repo = new Repo(db);
+  const login = new LoginManager(repo, storage, options.login);
   const runner = new CaptureRunner(repo, storage);
   repo.failInterruptedCaptures();
+
+  let demoSite: FixtureServer | null = null;
 
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
   // 服务关闭时等采集队列清空再关数据库;否则 Windows 上数据文件会一直被占用
   app.addHook('onClose', async () => {
     await runner.idle();
+    login.forget();
+    await demoSite?.close();
     db.close();
   });
 
@@ -142,6 +154,7 @@ export async function createApp(options: AppOptions): Promise<AppContext> {
     }
     if (err instanceof ScopeError) return reply.code(400).send({ error: err.message });
     if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+    if (err instanceof ConflictError) return reply.code(409).send({ error: err.message });
     const message = (err as Error).message ?? '';
     if (/UNIQUE constraint failed: pages/.test(message)) return reply.code(409).send({ error: '该网址已在页面清单中' });
     const status = (err as { statusCode?: number }).statusCode;
@@ -177,7 +190,44 @@ export async function createApp(options: AppOptions): Promise<AppContext> {
     return repo.updateProject(id((req.params as any).id), {
       ...body,
       allowedDomains: body.allowedDomains ? normalizeDomains(body.allowedDomains) : undefined,
+      allowedPost: body.allowedPost ? normalizePostPatterns(body.allowedPost) : undefined,
     });
+  });
+
+  // ---- 登录会话:由使用者在自己打开的浏览器窗口里登录,本工具不接触、不保存任何账号密码 ----
+  app.get('/api/projects/:id/login', async (req) => login.state(repo.getProject(id((req.params as any).id))));
+
+  app.post('/api/projects/:id/login', async (req) => {
+    const project = repo.getProject(id((req.params as any).id));
+    const body = z.object({ url: z.string().trim().max(2000).optional() }).parse(req.body ?? {});
+    const first = repo.listPages(project.id)[0]?.url;
+    const url = body.url || project.targetUrl || first;
+    if (!url) throw new ScopeError('请先填写目标网站,或添加一个页面,再打开登录窗口');
+    await login.start(project, url);
+    return login.state(project);
+  });
+
+  /** 使用者在登录窗口里登录成功后点"我已登录":保存登录状态并关闭窗口 */
+  app.post('/api/projects/:id/login/finish', async (req) => login.finish(repo.getProject(id((req.params as any).id))));
+
+  app.delete('/api/projects/:id/login', async (req) => {
+    const projectId = id((req.params as any).id);
+    login.clear(projectId);
+    return login.state(repo.getProject(projectId));
+  });
+
+  // ---- 示例项目:自带测试站,第一次使用时一键体验完整流程 ----
+  app.post('/api/demo', async (_req, reply) => {
+    demoSite ??= await startFixtures();
+    const project = repo.createProject({
+      name: '示例:培训机构网站',
+      targetUrl: demoSite.url,
+      purpose: '体验完整流程:采集 → 发现页面 → 登录 → 整理功能 → 导出报告',
+      authorization: 'UIEvidence 自带的本地示例站点,可随意分析',
+      allowedDomains: [`127.0.0.1:${demoSite.port}`],
+    });
+    repo.addPage(project.id, `${demoSite.url}/`);
+    return reply.code(201).send(project);
   });
 
   app.delete('/api/projects/:id', async (req, reply) => {
@@ -198,6 +248,53 @@ export async function createApp(options: AppOptions): Promise<AppContext> {
     const page = repo.addPage(projectId, new URL(body.url).href, body.note ?? '');
     return reply.code(201).send(page);
   });
+
+  /** 批量加入页面(通常来自"发现的链接"):白名单外、重复、不是网页的都会跳过并说明原因 */
+  app.post('/api/projects/:id/pages/bulk', async (req): Promise<BulkAddResult> => {
+    const projectId = id((req.params as any).id);
+    const project = repo.getProject(projectId);
+    const body = z.object({ urls: z.array(z.string().max(2000)).min(1).max(300) }).parse(req.body);
+
+    const added: Page[] = [];
+    const skipped: BulkAddResult['skipped'] = [];
+    const known = new Set(repo.listPages(projectId).map((p) => pageKey(p.url)));
+    for (const raw of body.urls) {
+      const url = normalizePageUrl(raw);
+      if (!url) {
+        skipped.push({ url: raw, reason: '不是有效的网址' });
+        continue;
+      }
+      const key = pageKey(url);
+      if (known.has(key)) {
+        skipped.push({ url, reason: '已在页面清单中' });
+        continue;
+      }
+      if (isFileLink(url)) {
+        skipped.push({ url, reason: '看起来是文件或静态资源' });
+        continue;
+      }
+      // 批量加入只看网址;手动逐个添加是使用者明确的决定,不拦
+      const risk = riskyReason(url);
+      if (risk) {
+        skipped.push({ url, reason: risk });
+        continue;
+      }
+      try {
+        assertUrlAllowed(url, project.allowedDomains);
+      } catch (err) {
+        skipped.push({ url, reason: (err as Error).message });
+        continue;
+      }
+      added.push(repo.addPage(projectId, url));
+      known.add(key);
+    }
+    return { added, skipped };
+  });
+
+  /** 已采集的页面里出现过、但还不在页面清单中的链接 */
+  app.get('/api/projects/:id/discovered', async (req) =>
+    discoverLinks(repo, storage, repo.getProject(id((req.params as any).id))),
+  );
 
   app.patch('/api/pages/:id', async (req) => {
     const body = z.object({ note: z.string().max(1000).optional(), title: z.string().max(300).optional() }).parse(req.body);
@@ -390,5 +487,5 @@ export async function createApp(options: AppOptions): Promise<AppContext> {
     });
   }
 
-  return { app, repo, storage, runner };
+  return { app, repo, storage, runner, login };
 }

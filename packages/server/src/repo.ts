@@ -26,6 +26,14 @@ export class NotFoundError extends Error {
   }
 }
 
+/** 当前状态下不能做这件事(例如登录窗口还开着),对应 HTTP 409 */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
 const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
   if (!text) return fallback;
   try {
@@ -46,6 +54,8 @@ function toProject(r: Row): Project {
     allowAi: !!r.allow_ai,
     archived: !!r.archived,
     planText: r.plan_text,
+    allowedPost: parseJson<string[]>(r.allowed_post, []),
+    loginSetAt: r.login_set_at ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -97,6 +107,7 @@ function toGap(r: Row): Gap {
     type: r.type,
     description: r.description,
     resolved: !!r.resolved,
+    meta: parseJson<Gap['meta']>(r.meta, null),
     createdAt: r.created_at,
   };
 }
@@ -170,7 +181,14 @@ export class Repo {
 
   updateProject(
     id: number,
-    patch: Partial<ProjectInput> & { allowAi?: boolean; archived?: boolean; planText?: string },
+    patch: Partial<ProjectInput> & {
+      allowAi?: boolean;
+      archived?: boolean;
+      planText?: string;
+      allowedPost?: string[];
+      /** null 表示清除登录会话 */
+      loginSetAt?: string | null;
+    },
   ): Project {
     const cur = this.getProject(id);
     const next = {
@@ -182,11 +200,13 @@ export class Repo {
       allowAi: patch.allowAi ?? cur.allowAi,
       archived: patch.archived ?? cur.archived,
       planText: patch.planText ?? cur.planText,
+      allowedPost: patch.allowedPost ?? cur.allowedPost,
+      loginSetAt: patch.loginSetAt === undefined ? cur.loginSetAt : patch.loginSetAt,
     };
     this.db
       .prepare(
         `UPDATE projects SET name=?, target_url=?, purpose=?, authorization=?, allowed_domains=?,
-         allow_ai=?, archived=?, plan_text=?, updated_at=? WHERE id=?`,
+         allow_ai=?, archived=?, plan_text=?, allowed_post=?, login_set_at=?, updated_at=? WHERE id=?`,
       )
       .run(
         next.name,
@@ -197,6 +217,8 @@ export class Repo {
         next.allowAi ? 1 : 0,
         next.archived ? 1 : 0,
         next.planText,
+        JSON.stringify(next.allowedPost),
+        next.loginSetAt,
         now(),
         id,
       );
@@ -544,12 +566,21 @@ export class Repo {
     captureId?: number | null;
     type: GapType;
     description: string;
+    meta?: Gap['meta'];
   }): Gap {
     const res = this.db
       .prepare(
-        `INSERT INTO gaps (project_id, page_id, capture_id, type, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO gaps (project_id, page_id, capture_id, type, description, meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.projectId, input.pageId ?? null, input.captureId ?? null, input.type, input.description, now());
+      .run(
+        input.projectId,
+        input.pageId ?? null,
+        input.captureId ?? null,
+        input.type,
+        input.description,
+        input.meta ? JSON.stringify(input.meta) : null,
+        now(),
+      );
     return toGap(this.db.prepare('SELECT * FROM gaps WHERE id = ?').get(Number(res.lastInsertRowid)) as Row);
   }
 

@@ -7,16 +7,16 @@ import {
   type FeatureKind,
   type RequirementCategory,
 } from '@uievidence/shared';
-import { api, evidenceUrl } from '../api';
+import { api } from '../api';
 import { useProjectStore } from '../store';
+import { tabPath } from '../tabs';
 import { notify } from '../toast';
 
-const props = defineProps<{ kinds: FeatureKind[]; title: string; hint: string }>();
+const props = defineProps<{ kinds: FeatureKind[]; title: string; hint: string; emptyHint: string }>();
 const store = useProjectStore();
 
 const filter = ref<'all' | 'pending' | 'rejected'>('all');
 const editing = ref<Feature | 'new' | null>(null);
-const lightboxEvidence = ref<number | null>(null);
 
 const draft = ref({
   name: '',
@@ -104,6 +104,12 @@ async function remove(f: Feature) {
   }
 }
 
+/** 点证据编号:打开它所属的页面,并定位到那一次采集 */
+function openEvidence(evidenceId: number) {
+  const c = store.captureOfEvidence(evidenceId);
+  if (c) store.openPage(c.pageId, c.id);
+}
+
 const evidenceLabel = (id: number) => {
   const e = store.evidenceById(id);
   const c = store.captureOfEvidence(id);
@@ -128,7 +134,14 @@ const evidenceLabel = (id: number) => {
     </div>
   </div>
 
-  <div v-if="!items.length" class="empty panel">这里还没有条目。</div>
+  <div v-if="!items.length" class="empty panel">
+    <div>{{ filter === 'all' ? '这里还没有条目。' : '没有符合筛选条件的条目。' }}</div>
+    <div class="small" style="margin: 6px auto 12px; max-width: 520px">{{ emptyHint }}</div>
+    <div class="row" style="justify-content: center">
+      <router-link v-if="kinds.includes('observed')" class="btn primary" :to="{ path: tabPath(store.projectId, 'pages'), query: {} }">去页面与证据,从采集结果创建</router-link>
+      <button :class="{ primary: !kinds.includes('observed') }" @click="openEditor('new')">手动新建条目</button>
+    </div>
+  </div>
 
   <div v-for="f in items" :key="f.id" class="feature" :class="[`k-${f.kind}`, { 'is-pending': f.status === 'pending' }]">
     <div class="row between">
@@ -152,8 +165,10 @@ const evidenceLabel = (id: number) => {
     <div v-if="f.description" style="margin: 4px 0; white-space: pre-wrap">{{ f.description }}</div>
     <div v-if="f.acceptance" class="small"><span class="muted">候选验收条件:</span>{{ f.acceptance }}</div>
     <div v-if="f.pageIds.length || f.evidenceIds.length" class="small" style="margin-top: 4px">
-      <span v-for="id in f.pageIds" :key="'p' + id" class="chip mono" :title="store.pageById(id)?.url">{{ store.pageById(id)?.title || store.pageById(id)?.url }}</span>
-      <button v-for="id in f.evidenceIds" :key="'e' + id" class="chip" :title="evidenceLabel(id)" @click="lightboxEvidence = id">
+      <button v-for="id in f.pageIds" :key="'p' + id" class="chip" :title="'查看这个页面的证据:' + store.pageById(id)?.url" @click="store.openPage(id)">
+        {{ store.pageById(id)?.title || store.pageById(id)?.url }}
+      </button>
+      <button v-for="id in f.evidenceIds" :key="'e' + id" class="chip evidence" :title="evidenceLabel(id)" @click="openEvidence(id)">
         {{ store.evidenceById(id)?.code }}
       </button>
     </div>
@@ -206,8 +221,4 @@ const evidenceLabel = (id: number) => {
     </form>
   </template>
 
-  <div v-if="lightboxEvidence" class="lightbox" @click="lightboxEvidence = null">
-    <div style="color: #fff; margin-bottom: 8px">{{ evidenceLabel(lightboxEvidence) }}</div>
-    <img :src="evidenceUrl(lightboxEvidence, 'screenshot')" alt="证据截图" />
-  </div>
 </template>

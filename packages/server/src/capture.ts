@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { Page as PwPage, Request as PwRequest } from 'playwright-core';
 import type {
   CaptureStatus,
@@ -7,10 +8,11 @@ import type {
   Project,
   StructureInteraction,
 } from '@uievidence/shared';
-import { launchBrowser } from './browser.js';
+import { detectLoginWall } from './auth.js';
+import { openSession } from './browser.js';
 import { EXTRACT_SCRIPT, SCROLL_SCRIPT } from './extract-script.js';
 import { type Repo } from './repo.js';
-import { assertUrlAllowed, isInternalUrl, isUrlAllowed, ScopeError } from './scope.js';
+import { assertUrlAllowed, isInternalUrl, isPostAllowed, isUrlAllowed, ScopeError } from './scope.js';
 import { type Storage } from './storage.js';
 
 const INTERACTION_LABELS: Record<InteractionType, string> = {
@@ -19,7 +21,7 @@ const INTERACTION_LABELS: Record<InteractionType, string> = {
   modal: '弹窗展开',
 };
 
-/** 采集期间唯一允许放行的请求方法;其余一律拦截,保证不会改变目标系统数据 */
+/** 采集期间默认放行的请求方法;其余一律拦截,保证不会改变目标系统数据。POST 只在项目放行清单里的路径才放行 */
 const READ_ONLY_METHODS = new Set(['GET', 'HEAD']);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,9 +31,17 @@ export interface CaptureOutcome {
   error: string | null;
 }
 
+interface BlockedWrite {
+  method: string;
+  url: string;
+  path: string;
+}
+
 /**
- * 串行执行采集任务。每个任务启动一个全新的浏览器进程(临时配置),
- * 任务之间互不影响,也不会带上使用者日常浏览器的登录状态。
+ * 串行执行采集任务。
+ *  - 每个任务启动一个全新的浏览器(临时配置),任务之间互不影响。
+ *  - 项目有使用者事先登录好的状态时带上它;没有则完全没有登录状态。
+ *    永远不会读取使用者日常浏览器的数据。
  */
 export class CaptureRunner {
   private queue: number[] = [];
@@ -97,11 +107,12 @@ export class CaptureRunner {
     captureId: number,
     type: Parameters<Repo['addGap']>[0]['type'],
     description: string,
+    meta?: Parameters<Repo['addGap']>[0]['meta'],
   ): void {
     const exists = this.repo
       .listGaps(projectId)
       .some((g) => g.pageId === pageId && g.type === type && g.description === description && !g.resolved);
-    if (!exists) this.repo.addGap({ projectId, pageId, captureId, type, description });
+    if (!exists) this.repo.addGap({ projectId, pageId, captureId, type, description, meta });
   }
 
   async execute(captureId: number): Promise<CaptureOutcome> {
@@ -136,26 +147,24 @@ export class CaptureRunner {
       return fail(message);
     }
 
-    let launched;
+    // 使用者事先登录好的状态;没有就是完全没有登录状态的全新浏览器
+    const authState = this.storage.authStatePath(project.id);
+    const hasLogin = !!project.loginSetAt && fs.existsSync(authState);
+
+    let session;
     try {
-      launched = await launchBrowser();
+      session = await openSession({ storageState: hasLogin ? authState : null, viewport: capture.viewport });
     } catch (err) {
       return fail((err as Error).message);
     }
-    const { browser, label } = launched;
+    const { context, label } = session;
 
-    const blockedWrites: string[] = [];
+    const blockedWrites: BlockedWrite[] = [];
     const blockedScope = new Set<string>();
     const failedResources: string[] = [];
     let httpStatus: number | null = null;
 
     try {
-      const context = await browser.newContext({
-        viewport: capture.viewport,
-        serviceWorkers: 'block',
-        acceptDownloads: false,
-      });
-
       await context.route('**/*', async (route) => {
         const request = route.request();
         const url = request.url();
@@ -164,8 +173,9 @@ export class CaptureRunner {
           blockedScope.add(safeHost(url));
           return route.abort('blockedbyclient');
         }
-        if (!READ_ONLY_METHODS.has(request.method())) {
-          blockedWrites.push(`${request.method()} ${url}`);
+        const method = request.method();
+        if (!READ_ONLY_METHODS.has(method) && !isPostAllowed(method, url, project.allowedPost)) {
+          blockedWrites.push({ method, url, path: safePath(url) });
           return route.abort('blockedbyclient');
         }
         return route.continue();
@@ -239,13 +249,39 @@ export class CaptureRunner {
 
       const structure = (await pw.evaluate(EXTRACT_SCRIPT).catch(() => null)) as PageStructure | null;
       const saved = await this.saveEvidence(project, capture.id, pw, structure, notes);
+      const finalUrl = safeUrl(pw);
+
+      // 被挡在登录页外:单独标成"需要登录",而不是笼统的失败
+      const wall = detectLoginWall({ requested: capture.url, finalUrl, httpStatus, structure });
+      if (wall) {
+        const hint = hasLogin
+          ? '登录可能已过期,或这个账号没有权限。请重新登录后再采集'
+          : '请先在项目里点“登录”,在打开的窗口里登录后再采集';
+        const error = `${wall.reason}。${hint}`;
+        notes.push(...scopeNotes(blockedScope, blockedWrites, failedResources));
+        this.repo.finishCapture(captureId, {
+          status: 'login_required',
+          finalUrl,
+          pageTitle: saved.title,
+          stateLabel,
+          httpStatus,
+          error,
+          notes,
+          browser: label,
+        });
+        // 登录页本身也是证据,留下截图方便使用者看到被挡在了哪里
+        if (saved.hasEvidence) this.repo.createEvidence(project.id, captureId, saved.files);
+        this.addGapOnce(project.id, page.id, captureId, 'auth_required', `${capture.url} 需要登录:${wall.reason}`);
+        this.recordGaps(project, page.id, captureId, 'login_required', '', blockedScope, blockedWrites, null);
+        return { status: 'login_required', error };
+      }
 
       if (httpStatus !== null && httpStatus >= 400) {
         const error = `HTTP ${httpStatus}`;
         notes.push(...scopeNotes(blockedScope, blockedWrites, failedResources));
         this.repo.finishCapture(captureId, {
           status: 'failed',
-          finalUrl: safeUrl(pw),
+          finalUrl,
           pageTitle: saved.title,
           stateLabel,
           httpStatus,
@@ -265,7 +301,7 @@ export class CaptureRunner {
 
       this.repo.finishCapture(captureId, {
         status,
-        finalUrl: safeUrl(pw),
+        finalUrl,
         pageTitle: saved.title,
         stateLabel,
         httpStatus,
@@ -276,13 +312,20 @@ export class CaptureRunner {
       if (saved.hasEvidence) this.repo.createEvidence(project.id, captureId, saved.files);
       if (saved.titleToSet && !page.title) this.repo.updatePage(page.id, { title: saved.titleToSet });
 
+      // 这次采集成功了,这个页面之前因为"需要登录"、"采集失败"留下的缺口已经不成立,自动标为已解决
+      for (const gap of this.repo.listGaps(project.id)) {
+        if (gap.pageId === page.id && !gap.resolved && (gap.type === 'auth_required' || gap.type === 'capture_failed' || gap.type === 'capture_partial')) {
+          this.repo.setGapResolved(gap.id, true);
+        }
+      }
+
       this.recordGaps(project, page.id, captureId, status, '', blockedScope, blockedWrites, structure);
       if (status === 'partial') {
         this.addGapOnce(project.id, page.id, captureId, 'capture_partial', `${capture.url}:${notes.join(';')}`);
       }
       return { status, error: null };
     } finally {
-      await browser.close().catch(() => {});
+      await session.close();
     }
   }
 
@@ -360,10 +403,10 @@ export class CaptureRunner {
     project: Project,
     pageId: number,
     captureId: number,
-    status: CaptureStatus,
+    status: CaptureStatus | 'failed',
     failure: string,
     blockedScope: Set<string>,
-    blockedWrites: string[],
+    blockedWrites: BlockedWrite[],
     structure: PageStructure | null,
   ): void {
     const url = this.repo.getCapture(captureId).url;
@@ -373,13 +416,19 @@ export class CaptureRunner {
     for (const host of blockedScope) {
       this.addGapOnce(project.id, pageId, captureId, 'out_of_scope', `${url} 引用了白名单外的地址 ${host},未请求`);
     }
-    if (blockedWrites.length) {
+    // 每个被拦截的写入请求单独记一条,方便使用者判断后放行(例如用 POST 读数据的接口)
+    const seen = new Set<string>();
+    for (const w of blockedWrites) {
+      const key = `${w.method} ${w.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       this.addGapOnce(
         project.id,
         pageId,
         captureId,
         'request_blocked',
-        `${url} 触发了 ${blockedWrites.length} 个写入类请求(${blockedWrites.slice(0, 3).join(', ')}),已拦截`,
+        `${url} 发出了写入类请求 ${key},已拦截。如果它只是用来读取数据,可以在“设置”里放行`,
+        { method: w.method, path: w.path },
       );
     }
     for (const item of structure?.blocked ?? []) {
@@ -396,6 +445,14 @@ function safeHost(url: string): string {
   }
 }
 
+function safePath(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
 function safeUrl(pw: PwPage): string | null {
   try {
     return pw.url() || null;
@@ -404,7 +461,7 @@ function safeUrl(pw: PwPage): string | null {
   }
 }
 
-function scopeNotes(blockedScope: Set<string>, blockedWrites: string[], failedResources: string[]): string[] {
+function scopeNotes(blockedScope: Set<string>, blockedWrites: BlockedWrite[], failedResources: string[]): string[] {
   const out: string[] = [];
   if (blockedScope.size) out.push(`已拦截对白名单外地址的请求:${[...blockedScope].join(', ')}`);
   if (blockedWrites.length) out.push(`已拦截 ${blockedWrites.length} 个写入类请求(只读采集)`);
@@ -414,7 +471,9 @@ function scopeNotes(blockedScope: Set<string>, blockedWrites: string[], failedRe
 
 function classifyNavError(err: Error, timeout: number, blockedScope: Set<string>): string {
   const msg = err.message;
-  if (blockedScope.size) return `页面请求了白名单外的地址(${[...blockedScope].join(', ')}),已拦截`;
+  if (blockedScope.size) {
+    return `页面请求了白名单外的地址(${[...blockedScope].join(', ')}),已拦截。如果这是登录或单点登录地址,把它加入白名单后再试`;
+  }
   if (/Timeout/i.test(msg)) return `页面加载超时(${Math.round(timeout / 1000)} 秒)`;
   if (msg.includes('ERR_NAME_NOT_RESOLVED')) return '域名无法解析';
   if (msg.includes('ERR_CONNECTION_REFUSED')) return '连接被拒绝,目标服务没有响应';

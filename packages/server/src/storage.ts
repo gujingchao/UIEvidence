@@ -45,6 +45,24 @@ export class Storage {
     fs.rmSync(this.resolve(path.posix.join('projects', String(projectId))), { recursive: true, force: true });
   }
 
+  /**
+   * 登录状态文件(Cookie、本地存储),等同于密码。
+   * 只放在项目目录里:随项目删除而删除,导出时从不读取。
+   */
+  authStatePath(projectId: number): string {
+    return this.resolve(path.posix.join('projects', String(projectId), 'auth-state.json'));
+  }
+
+  /** 登录窗口用的临时浏览器目录,窗口结束后删除 */
+  loginWindowDir(projectId: number): string {
+    return this.resolve(path.posix.join('projects', String(projectId), 'login-window'));
+  }
+
+  removeAuth(projectId: number): void {
+    fs.rmSync(this.authStatePath(projectId), { force: true });
+    fs.rmSync(this.loginWindowDir(projectId), { recursive: true, force: true });
+  }
+
   exportDir(projectId: number, stamp: string): string {
     return this.resolve(path.posix.join('exports', String(projectId), stamp));
   }

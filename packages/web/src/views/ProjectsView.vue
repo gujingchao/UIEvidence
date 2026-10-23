@@ -10,6 +10,8 @@ const projects = ref<Project[]>([]);
 const health = ref<HealthInfo | null>(null);
 const showArchived = ref(false);
 const creating = ref(false);
+const loaded = ref(false);
+const demoBusy = ref(false);
 
 const form = ref({ name: '', targetUrl: '', purpose: '', authorization: '', domains: '', confirmed: false });
 
@@ -22,6 +24,8 @@ async function load() {
     projects.value = await api.listProjects(showArchived.value);
   } catch (err) {
     notify((err as Error).message, 'error');
+  } finally {
+    loaded.value = true;
   }
 }
 
@@ -59,6 +63,18 @@ async function create() {
     notify((err as Error).message, 'error');
   }
 }
+
+async function createDemo() {
+  demoBusy.value = true;
+  try {
+    const project = await api.createDemo();
+    router.push(`/projects/${project.id}`);
+  } catch (err) {
+    notify((err as Error).message, 'error');
+  } finally {
+    demoBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -66,11 +82,26 @@ async function create() {
     没有找到可用的 Chrome 或 Edge,无法采集页面。请安装 Chrome,或用环境变量 <code>UIEV_CHROME_PATH</code> 指定浏览器路径。
   </div>
 
+  <!-- 第一次使用:告诉用户这是什么、怎么开始 -->
+  <div v-if="loaded && !projects.length && !creating" class="panel welcome">
+    <h1>开始分析一个网站</h1>
+    <p>
+      给一个参考网站的入口页,UIEvidence 会替你逐页打开、保存截图和页面结构,帮你整理出功能清单和待确认的问题,最后导出一份每条结论都有证据的分析报告。
+      全程只读,不会提交表单,也不会删除任何东西。
+    </p>
+    <div class="row">
+      <button class="primary" @click="creating = true">新建项目</button>
+      <button :disabled="demoBusy" @click="createDemo">{{ demoBusy ? '正在准备…' : '先用示例项目体验一遍' }}</button>
+    </div>
+    <div class="muted small" style="margin-top: 8px">示例项目带一个本机的演示网站,包含分页、表单、需要登录的会员页和带危险按钮的页面,不会访问任何外部网站。</div>
+  </div>
+
   <div class="panel">
     <div class="row between">
       <h2>分析项目</h2>
       <div class="row">
         <label class="small"><input v-model="showArchived" type="checkbox" @change="load" /> 显示已归档</label>
+        <button v-if="projects.length" :disabled="demoBusy" @click="createDemo">新建示例项目</button>
         <button class="primary" @click="creating = !creating">{{ creating ? '收起' : '新建项目' }}</button>
       </div>
     </div>
@@ -105,7 +136,6 @@ async function create() {
     </form>
   </div>
 
-  <div v-if="!projects.length" class="empty panel">还没有项目。点击右上角“新建项目”开始。</div>
   <div v-for="p in projects" :key="p.id" class="panel">
     <div class="row between">
       <div>
@@ -118,7 +148,10 @@ async function create() {
           <span v-for="d in p.allowedDomains" :key="d" class="chip">{{ d }}</span>
         </div>
       </div>
-      <span class="muted small">创建于 {{ new Date(p.createdAt).toLocaleString() }}</span>
+      <div class="row">
+        <span class="muted small">创建于 {{ new Date(p.createdAt).toLocaleString() }}</span>
+        <router-link class="btn primary" :to="`/projects/${p.id}`">打开</router-link>
+      </div>
     </div>
   </div>
 </template>

@@ -61,6 +61,56 @@ export function isUrlAllowed(url: string, domains: string[]): boolean {
   });
 }
 
+/** 只比较主机名,不看端口。Cookie 的作用域是域名,不带端口,白名单里的端口限定对它没有意义 */
+export function isHostAllowed(host: string, domains: string[]): boolean {
+  const name = host.replace(/^\./, '').toLowerCase();
+  return domains.some((entry) => {
+    const [pattern = ''] = splitHostPort(entry);
+    if (pattern.startsWith('*.')) {
+      const suffix = pattern.slice(1);
+      return name.length > suffix.length && name.endsWith(suffix);
+    }
+    return name === pattern;
+  });
+}
+
+/**
+ * 只读 POST 放行清单。条目是路径:
+ *   /api/list      精确匹配
+ *   /api/query/*   前缀匹配
+ * 只放行 POST;PUT、PATCH、DELETE 永远不放行。放行与否只看路径,域名仍由白名单控制。
+ */
+export function normalizePostPatterns(list: string[]): string[] {
+  const seen = new Set<string>();
+  for (const raw of list) {
+    let value = raw.trim();
+    if (!value) continue;
+    // 允许用户直接粘贴完整网址
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        value = new URL(value).pathname;
+      } catch {
+        continue;
+      }
+    }
+    value = value.split(/[?#]/)[0] ?? '';
+    if (!value.startsWith('/')) value = `/${value}`;
+    seen.add(value);
+  }
+  return [...seen].slice(0, 100);
+}
+
+export function isPostAllowed(method: string, url: string, patterns: string[]): boolean {
+  if (method.toUpperCase() !== 'POST') return false;
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  return patterns.some((p) => (p.endsWith('*') ? pathname.startsWith(p.slice(0, -1)) : pathname === p));
+}
+
 function splitHostPort(entry: string): [string, string | undefined] {
   // IPv6 形如 [::1]:4000
   const ipv6 = /^\[(.+)\](?::(\d+))?$/.exec(entry);

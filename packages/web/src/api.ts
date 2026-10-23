@@ -1,6 +1,8 @@
 import type {
   AiProviderInfo,
+  BulkAddResult,
   Capture,
+  DiscoveryResult,
   Evidence,
   ExportResult,
   Feature,
@@ -8,6 +10,7 @@ import type {
   Gap,
   HealthInfo,
   InteractionRequest,
+  LoginState,
   Page,
   PageStructure,
   Project,
@@ -58,6 +61,15 @@ export const api = {
     request<Project>('POST', '/api/projects', body),
   updateProject: (id: number, patch: Partial<Project>) => request<Project>('PATCH', `/api/projects/${id}`, patch),
   deleteProject: (id: number) => request<void>('DELETE', `/api/projects/${id}`),
+  createDemo: () => request<Project>('POST', '/api/demo'),
+
+  loginState: (projectId: number) => request<LoginState>('GET', `/api/projects/${projectId}/login`),
+  startLogin: (projectId: number, url?: string) => request<LoginState>('POST', `/api/projects/${projectId}/login`, url ? { url } : {}),
+  finishLogin: (projectId: number) => request<LoginState>('POST', `/api/projects/${projectId}/login/finish`),
+  clearLogin: (projectId: number) => request<LoginState>('DELETE', `/api/projects/${projectId}/login`),
+
+  discovered: (projectId: number) => request<DiscoveryResult>('GET', `/api/projects/${projectId}/discovered`),
+  bulkAddPages: (projectId: number, urls: string[]) => request<BulkAddResult>('POST', `/api/projects/${projectId}/pages/bulk`, { urls }),
 
   listPages: (projectId: number) => request<Page[]>('GET', `/api/projects/${projectId}/pages`),
   addPage: (projectId: number, url: string, note = '') => request<Page>('POST', `/api/projects/${projectId}/pages`, { url, note }),
