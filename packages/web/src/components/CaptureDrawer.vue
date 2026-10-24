@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { FEATURE_KIND_LABELS, type AiProviderInfo, type Capture, type Page, type PageStructure, type StructureInteraction } from '@uievidence/shared';
+import { FEATURE_KIND_LABELS, groupDuplicates, type AiProviderInfo, type Capture, type Page, type PageStructure, type StructureInteraction } from '@uievidence/shared';
 import { api, evidenceUrl, type Candidate } from '../api';
 import { CAPTURE_STATUS_LABELS, fmtTime, INTERACTION_LABELS, shortUrl } from '../labels';
 import { useProjectStore } from '../store';
@@ -38,6 +38,12 @@ const siblings = computed(() => {
 });
 
 const structure = ref<PageStructure | null>(null);
+const formFieldText = (f: PageStructure['forms'][number]) =>
+  f.fields.map((x) => (x.label || x.name) + (x.required ? '*' : '')).join('、') || '无字段';
+const formGroups = computed(() =>
+  groupDuplicates(structure.value?.forms ?? [], (f) => `${f.submitText}|${f.method}|${formFieldText(f)}|${f.action}`),
+);
+const blockedGroups = computed(() => groupDuplicates(structure.value?.blocked ?? [], (b) => `${b.text}|${b.reason}`));
 const candidates = ref<Candidate[]>([]);
 const checked = ref<Set<number>>(new Set());
 const zoom = ref(false);
@@ -225,9 +231,9 @@ const toggle = (i: number) => {
         <div class="small stack" style="margin-top: 8px">
           <div v-if="structure.headings.length"><strong>标题:</strong>{{ structure.headings.slice(0, 6).map((h) => h.text).join(' / ') }}</div>
           <div v-if="structure.nav.length"><strong>导航:</strong>{{ structure.nav.map((n) => n.text).join('、') }}</div>
-          <div v-for="(f, i) in structure.forms" :key="i">
-            <strong>表单({{ f.method.toUpperCase() }}):</strong>
-            {{ f.fields.map((x) => (x.label || x.name) + (x.required ? '*' : '')).join('、') || '无字段' }}
+          <div v-for="(g, i) in formGroups" :key="i">
+            <strong>表单({{ g.item.method.toUpperCase() }}):</strong>
+            <template v-if="g.item.submitText">「{{ g.item.submitText }}」</template>{{ formFieldText(g.item) }}<span v-if="g.count > 1" class="muted"> ×{{ g.count }}</span>
           </div>
           <div v-for="(l, i) in structure.lists" :key="'l' + i"><strong>{{ { list: '列表', table: '表格', cards: '卡片' }[l.kind] }}:</strong>{{ l.itemCount }} 项</div>
         </div>
@@ -242,8 +248,9 @@ const toggle = (i: number) => {
 
         <h3 style="margin-top: 14px">看到但没有执行的入口</h3>
         <div v-if="!structure.blocked.length" class="muted small">无。</div>
-        <div v-for="(b, i) in structure.blocked" :key="i" class="small">
-          <strong>「{{ b.text }}」</strong><span class="muted"> {{ b.reason }}</span>
+        <div v-for="(g, i) in blockedGroups" :key="i" class="small">
+          <strong>「{{ g.item.text }}」</strong><span v-if="g.count > 1" class="muted"> ×{{ g.count }}</span
+          ><span class="muted">{{ ' ' + g.item.reason }}</span>
         </div>
       </details>
 

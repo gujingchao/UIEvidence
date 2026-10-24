@@ -15,9 +15,16 @@ const demoBusy = ref(false);
 
 const form = ref({ name: '', targetUrl: '', purpose: '', authorization: '', domains: '', confirmed: false });
 
-const canSubmit = computed(
-  () => form.value.name.trim() && form.value.authorization.trim() && form.value.domains.trim() && form.value.confirmed,
-);
+const missing = computed(() => {
+  const f = form.value;
+  const out: string[] = [];
+  if (!f.name.trim()) out.push('项目名称');
+  if (!f.domains.trim()) out.push('允许分析的域名');
+  if (!f.authorization.trim()) out.push('授权说明');
+  if (!f.confirmed) out.push('勾选授权确认');
+  return out;
+});
+const canSubmit = computed(() => missing.value.length === 0);
 
 async function load() {
   try {
@@ -132,7 +139,10 @@ async function createDemo() {
         <input v-model="form.confirmed" type="checkbox" />
         <span>我确认只分析公开网站,或已获得明确授权的系统。</span>
       </label>
-      <div class="row"><button class="primary" type="submit" :disabled="!canSubmit">创建项目</button></div>
+      <div class="row">
+        <button class="primary" type="submit" :disabled="!canSubmit">创建项目</button>
+        <span v-if="missing.length" class="hint">还需要:{{ missing.join('、') }}</span>
+      </div>
     </form>
   </div>
 

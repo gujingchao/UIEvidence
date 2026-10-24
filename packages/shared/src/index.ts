@@ -8,6 +8,18 @@ export const FEATURE_KIND_LABELS: Record<FeatureKind, string> = {
   question: '待确认问题',
 };
 
+/** 按 key 合并重复项并记数,保持首次出现的顺序(列表页上的 20 个相同按钮只显示一次) */
+export function groupDuplicates<T>(items: T[], key: (item: T) => string): { item: T; count: number }[] {
+  const groups = new Map<string, { item: T; count: number }>();
+  for (const item of items) {
+    const k = key(item);
+    const g = groups.get(k);
+    if (g) g.count += 1;
+    else groups.set(k, { item, count: 1 });
+  }
+  return [...groups.values()];
+}
+
 export type FeatureSource = 'manual' | 'ai';
 /** AI 生成的条目先是 pending,人工采纳后才是 accepted */
 export type FeatureStatus = 'accepted' | 'pending' | 'rejected';

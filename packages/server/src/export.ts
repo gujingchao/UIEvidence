@@ -4,6 +4,7 @@ import { zipSync } from 'fflate';
 import {
   FEATURE_KIND_LABELS,
   REQUIREMENT_CATEGORY_LABELS,
+  groupDuplicates,
   type Capture,
   type ExportResult,
   type Feature,
@@ -90,14 +91,17 @@ function summarize(s: PageStructure | null): string[] {
   const lines: string[] = [];
   if (s.headings.length) lines.push(`标题:${s.headings.slice(0, 5).map((h) => h.text).join(' / ')}`);
   if (s.nav.length) lines.push(`导航:${s.nav.slice(0, 10).map((n) => n.text).join('、')}`);
-  for (const f of s.forms) {
-    lines.push(
-      `表单(${f.method.toUpperCase()}):${f.fields.map((x) => `${x.label || x.name}${x.required ? '*' : ''}`).join('、') || '无字段'}`,
-    );
+  const fieldText = (f: PageStructure['forms'][number]) =>
+    f.fields.map((x) => `${x.label || x.name}${x.required ? '*' : ''}`).join('、') || '无字段';
+  for (const { item: f, count } of groupDuplicates(s.forms, (f) => `${f.submitText}|${f.method}|${fieldText(f)}|${f.action}`)) {
+    lines.push(`表单(${f.method.toUpperCase()}):${f.submitText ? `「${f.submitText}」` : ''}${fieldText(f)}${count > 1 ? ` ×${count}` : ''}`);
   }
   for (const l of s.lists) lines.push(`${{ list: '列表', table: '表格', cards: '卡片' }[l.kind]}:${l.itemCount} 项`);
   if (s.interactions.length) lines.push(`可执行交互:${s.interactions.map((i) => i.text || i.type).join('、')}`);
-  if (s.blocked.length) lines.push(`未执行:${s.blocked.map((b) => b.text).join('、')}`);
+  if (s.blocked.length) {
+    const blocked = groupDuplicates(s.blocked, (b) => b.text).map(({ item, count }) => (count > 1 ? `${item.text} ×${count}` : item.text));
+    lines.push(`未执行:${blocked.join('、')}`);
+  }
   return lines;
 }
 

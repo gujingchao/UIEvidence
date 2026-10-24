@@ -1,4 +1,4 @@
-import type { FeatureKind, PageStructure } from '@uievidence/shared';
+import { groupDuplicates, type FeatureKind, type PageStructure } from '@uievidence/shared';
 
 export interface Candidate {
   name: string;
@@ -29,11 +29,19 @@ export function candidatesFromStructure(s: PageStructure): Candidate[] {
     });
   }
 
-  for (const form of s.forms) {
-    const fields = form.fields.map((f) => `${f.label || f.name || f.type}${f.required ? '(必填)' : ''}`).join('、');
+  const describeForm = (form: PageStructure['forms'][number]) =>
+    form.fields.map((f) => `${f.label || f.name || f.type}${f.required ? '(必填)' : ''}`).join('、');
+  // 列表页上重复出现的同类表单(如每个商品一个"加入购物车")合并成一条
+  const forms = groupDuplicates(
+    s.forms,
+    (f) => `${f.submitText}|${f.method}|${describeForm(f)}|${f.action}`,
+  );
+  for (const { item: form, count } of forms) {
     out.push({
       name: `表单:${form.submitText || '未命名表单'}`,
-      description: `字段:${fields || '无'}。提交方式 ${form.method.toUpperCase()}。提交入口已记录,未执行提交,提交后的处理逻辑待确认。`,
+      description:
+        `字段:${describeForm(form) || '无'}。提交方式 ${form.method.toUpperCase()}。提交入口已记录,未执行提交,提交后的处理逻辑待确认。` +
+        (count > 1 ? `页面上共有 ${count} 处相同的表单。` : ''),
       kind: 'observed',
     });
   }
