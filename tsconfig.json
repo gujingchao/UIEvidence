@@ -19,6 +19,7 @@
     "packages/server/test",
     "packages/fixtures/src",
     "tests",
+    "scripts",
     "vitest.config.ts",
     "playwright.config.ts"
   ]

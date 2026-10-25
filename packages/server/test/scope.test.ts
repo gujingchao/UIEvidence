@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertUrlAllowed, isUrlAllowed, normalizeDomains, ScopeError } from '../src/scope.js';
+import { assertUrlAllowed, isHostAllowed, isUrlAllowed, normalizeDomains, ScopeError } from '../src/scope.js';
 
 describe('域名白名单', () => {
   it('精确匹配主机名,忽略端口', () => {
@@ -18,6 +18,37 @@ describe('域名白名单', () => {
   it('条目带端口时端口必须一致', () => {
     expect(isUrlAllowed('http://127.0.0.1:4000/', ['127.0.0.1:4000'])).toBe(true);
     expect(isUrlAllowed('http://127.0.0.1:4001/', ['127.0.0.1:4000'])).toBe(false);
+  });
+
+  it.each([
+    ['http://example.com/', 'example.com:80'],
+    ['http://example.com:80/', 'example.com:80'],
+    ['https://example.com/', 'example.com:443'],
+    ['https://example.com:443/', 'example.com:443'],
+    ['https://www.example.com/', '*.example.com:443'],
+  ])('默认端口也能匹配白名单:%s', (url, domain) => {
+    expect(isUrlAllowed(url, [domain])).toBe(true);
+  });
+
+  it('默认端口不能放行其他协议的端口或非默认端口', () => {
+    expect(isUrlAllowed('https://example.com/', ['example.com:80'])).toBe(false);
+    expect(isUrlAllowed('http://example.com/', ['example.com:443'])).toBe(false);
+    expect(isUrlAllowed('https://example.com:8443/', ['example.com:443'])).toBe(false);
+  });
+
+  it('IPv6 白名单支持端口、默认端口和等价的地址写法', () => {
+    expect(isUrlAllowed('http://[::1]:4100/', ['[::1]:4100'])).toBe(true);
+    expect(isUrlAllowed('http://[::1]:4101/', ['[::1]:4100'])).toBe(false);
+    expect(isUrlAllowed('http://[::1]:4100/', ['[::1]'])).toBe(true);
+    expect(isUrlAllowed('http://[::1]/', ['[::1]:80'])).toBe(true);
+    expect(isUrlAllowed('https://[::1]/', ['[0:0:0:0:0:0:0:1]:443'])).toBe(true);
+    expect(isUrlAllowed('http://[::2]:4100/', ['[::1]:4100'])).toBe(false);
+  });
+
+  it('登录状态的 IPv6 主机名与白名单使用相同的归一化规则', () => {
+    expect(isHostAllowed('[::1]', ['[::1]:4100'])).toBe(true);
+    expect(isHostAllowed('::1', ['[0:0:0:0:0:0:0:1]:4100'])).toBe(true);
+    expect(isHostAllowed('[::2]', ['[::1]'])).toBe(false);
   });
 
   it('127.0.0.1 和 localhost 是不同的主机名', () => {

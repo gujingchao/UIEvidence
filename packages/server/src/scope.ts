@@ -48,7 +48,8 @@ export function isUrlAllowed(url: string, domains: string[]): boolean {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   const host = parsed.hostname.toLowerCase();
-  const port = parsed.port;
+  // URL 会移除 :80 / :443,比较时补回该协议的实际端口。
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
 
   return domains.some((entry) => {
     const [pattern = '', entryPort] = splitHostPort(entry);
@@ -63,7 +64,7 @@ export function isUrlAllowed(url: string, domains: string[]): boolean {
 
 /** 只比较主机名,不看端口。Cookie 的作用域是域名,不带端口,白名单里的端口限定对它没有意义 */
 export function isHostAllowed(host: string, domains: string[]): boolean {
-  const name = host.replace(/^\./, '').toLowerCase();
+  const name = normalizeHost(host);
   return domains.some((entry) => {
     const [pattern = ''] = splitHostPort(entry);
     if (pattern.startsWith('*.')) {
@@ -111,10 +112,21 @@ export function isPostAllowed(method: string, url: string, patterns: string[]): 
   return patterns.some((p) => (p.endsWith('*') ? pathname.startsWith(p.slice(0, -1)) : pathname === p));
 }
 
+function normalizeHost(host: string): string {
+  const name = host.replace(/^\./, '').toLowerCase();
+  if (!name.includes(':')) return name;
+  try {
+    // URL.hostname 保留 IPv6 方括号,并将等价的长地址压缩为同一种写法。
+    return new URL(`http://[${name.replace(/^\[|\]$/g, '')}]`).hostname;
+  } catch {
+    return name;
+  }
+}
+
 function splitHostPort(entry: string): [string, string | undefined] {
   // IPv6 形如 [::1]:4000
   const ipv6 = /^\[(.+)\](?::(\d+))?$/.exec(entry);
-  if (ipv6) return [ipv6[1] ?? '', ipv6[2]];
+  if (ipv6) return [normalizeHost(ipv6[1] ?? ''), ipv6[2]];
   const idx = entry.lastIndexOf(':');
   if (idx > 0 && /^\d+$/.test(entry.slice(idx + 1))) return [entry.slice(0, idx), entry.slice(idx + 1)];
   return [entry, undefined];

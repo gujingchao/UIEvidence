@@ -165,6 +165,17 @@ export class CaptureRunner {
     let httpStatus: number | null = null;
 
     try {
+      // HTTP route 不拦截 WebSocket。只读采集不能判断消息是否有副作用,
+      // 因此在创建页面前拦截全部通道,不调用 connectToServer 建立外部连接。
+      await context.routeWebSocket(/.*/, async (socket) => {
+        const url = socket.url();
+        const httpUrl = new URL(url);
+        httpUrl.protocol = httpUrl.protocol === 'wss:' ? 'https:' : 'http:';
+        if (!isUrlAllowed(httpUrl.href, project.allowedDomains)) blockedScope.add(safeHost(url));
+        blockedWrites.push({ method: 'WEBSOCKET', url, path: safePath(url) });
+        await socket.close({ code: 1008, reason: '只读采集不允许 WebSocket' });
+      });
+
       await context.route('**/*', async (route) => {
         const request = route.request();
         const url = request.url();
@@ -295,7 +306,7 @@ export class CaptureRunner {
         return { status: 'failed', error };
       }
 
-      if (failedResources.length || blockedScope.size) partial = true;
+      if (failedResources.length || blockedScope.size || blockedWrites.some(w => w.method === 'WEBSOCKET')) partial = true;
       notes.push(...scopeNotes(blockedScope, blockedWrites, failedResources));
       const status: CaptureStatus = partial ? 'partial' : 'success';
 
@@ -419,9 +430,20 @@ export class CaptureRunner {
     // 每个被拦截的写入请求单独记一条,方便使用者判断后放行(例如用 POST 读数据的接口)
     const seen = new Set<string>();
     for (const w of blockedWrites) {
-      const key = `${w.method} ${w.path}`;
+      const key = `${w.method} ${w.method === 'WEBSOCKET' ? safeHost(w.url) : ''}${w.path}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      if (w.method === 'WEBSOCKET') {
+        this.addGapOnce(
+          project.id,
+          pageId,
+          captureId,
+          'request_blocked',
+          `${url} 的 WebSocket 通道 ${safeHost(w.url)}${w.path} 已拦截,未建立连接;依赖该通道的内容可能不完整`,
+          { method: w.method, path: w.path },
+        );
+        continue;
+      }
       this.addGapOnce(
         project.id,
         pageId,
@@ -464,7 +486,10 @@ function safeUrl(pw: PwPage): string | null {
 function scopeNotes(blockedScope: Set<string>, blockedWrites: BlockedWrite[], failedResources: string[]): string[] {
   const out: string[] = [];
   if (blockedScope.size) out.push(`已拦截对白名单外地址的请求:${[...blockedScope].join(', ')}`);
-  if (blockedWrites.length) out.push(`已拦截 ${blockedWrites.length} 个写入类请求(只读采集)`);
+  const websocketCount = blockedWrites.filter(w => w.method === 'WEBSOCKET').length;
+  if (websocketCount) out.push(`已拦截 ${websocketCount} 个 WebSocket 通道(只读采集),依赖通道的内容可能不完整`);
+  const httpWriteCount = blockedWrites.length - websocketCount;
+  if (httpWriteCount) out.push(`已拦截 ${httpWriteCount} 个写入类请求(只读采集)`);
   if (failedResources.length) out.push(`${failedResources.length} 个资源加载失败:${failedResources.slice(0, 3).join(', ')}`);
   return out;
 }

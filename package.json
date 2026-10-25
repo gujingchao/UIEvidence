@@ -17,6 +17,7 @@
     "start": "npm run build && npm run start -w @uievidence/server",
     "fixtures": "npm run start -w @uievidence/fixtures",
     "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck -w @uievidence/web",
+    "pretest": "tsx scripts/require-browser.ts",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
@@ -25,6 +26,6 @@
     "@types/node": "^22.10.0",
     "concurrently": "^9.1.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.8"
+    "vitest": "^5.0.5"
   }
 }
