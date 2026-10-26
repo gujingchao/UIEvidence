@@ -19,7 +19,18 @@ jobs:
       - run: npm ci
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      - name: Check available browser
+        id: browser
+        shell: bash
+        run: |
+          if npm run pretest; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install Chrome for integration and end-to-end tests
+        if: steps.browser.outputs.available != 'true'
+        timeout-minutes: 5
         run: npx playwright install --with-deps chrome
       - run: npm run typecheck
       - run: npm run build
