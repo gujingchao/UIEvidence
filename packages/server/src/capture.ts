@@ -427,7 +427,8 @@ export class CaptureRunner {
     for (const host of blockedScope) {
       this.addGapOnce(project.id, pageId, captureId, 'out_of_scope', `${url} 引用了白名单外的地址 ${host},未请求`);
     }
-    // 每个被拦截的写入请求单独记一条,方便使用者判断后放行(例如用 POST 读数据的接口)
+    // HTTP 写入请求按方法和路径记录,仅只读 POST 可由使用者按路径放行。
+    // WebSocket 额外按主机区分,始终阻断并记缺口,不适用 POST 放行清单。
     const seen = new Set<string>();
     for (const w of blockedWrites) {
       const key = `${w.method} ${w.method === 'WEBSOCKET' ? safeHost(w.url) : ''}${w.path}`;

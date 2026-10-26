@@ -6,7 +6,7 @@ import { createApp } from './app.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../..');
 
-// 可选的 .env,只用来放模型服务的密钥;已加入 .gitignore
+// 可选的 .env 保存模型密钥及端口、数据目录等本机配置;已加入 .gitignore。
 const envFile = path.join(repoRoot, '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
